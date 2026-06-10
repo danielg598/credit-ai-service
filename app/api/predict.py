@@ -21,6 +21,9 @@ from app.schemas.predict import FactorClave, PredictRequest, PredictResponse
 from app.services.groq_explainer import explain_decision
 from app.services.model_service import predict_probability
 from app.services.shap_service import top_contributing_factors
+from opentelemetry import trace
+
+tracer = trace.get_tracer(__name__)
 
 log = logging.getLogger("credit-ai.api")
 router = APIRouter(tags=["Predict"])
@@ -44,23 +47,29 @@ def predict(request: PredictRequest) -> PredictResponse:
 
     try:
         # --- 1. Inferencia del modelo ---
-        probability, X_row = predict_probability(features)
+        with tracer.start_as_current_span("model.infer") as span:
+            probability, X_row = predict_probability(features)
+            span.set_attribute("credit.probability_default", probability)
 
         # --- 2. Decision segun umbral ---
         decision = "APROBADO" if probability < settings.DEFAULT_THRESHOLD else "RECHAZADO"
         score = int((1.0 - probability) * 1000)
 
         # --- 3. SHAP: top 5 factores ---
-        shap_factors = top_contributing_factors(X_row, top_n=5)
+        with tracer.start_as_current_span("shap.explain"):
+            shap_factors = top_contributing_factors(X_row, top_n=5)
 
         # --- 4. Groq: explicacion en español ---
-        explanation = explain_decision(
-            applicant=features,
-            probability=probability,
-            threshold=settings.DEFAULT_THRESHOLD,
-            decision=decision,
-            shap_factors=shap_factors,
-        )
+        with tracer.start_as_current_span("groq.explain") as span:
+            span.set_attribute("credit.decision", decision)
+            span.set_attribute("credit.score", score)
+            explanation = explain_decision(
+                applicant=features,
+                probability=probability,
+                threshold=settings.DEFAULT_THRESHOLD,
+                decision=decision,
+                shap_factors=shap_factors,
+            )
 
         # --- 5. Ensamblar response ---
         factores_dto = [

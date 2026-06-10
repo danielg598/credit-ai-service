@@ -21,6 +21,7 @@ from app.api import predict as predict_router
 from contextlib import asynccontextmanager
 
 from app.core.config import get_settings
+from app.core.telemetry import setup_telemetry
 
 # --- Logging ---
 logging.basicConfig(
@@ -52,6 +53,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,    # ← registramos el lifespan aqui
 )
+
+setup_telemetry(app, "credit-ai-service")
 
 # --- CORS (por si Angular pega directo para debug, igual que el vault-mock) ---
 app.add_middleware(
